@@ -161,8 +161,8 @@ def find_var_matches(mem_dump, var_names):
       for ident,length in re.findall(r'(.{6})..(.{4})'+(item[0][1].encode('UTF-16LE')), mem_dump):
         if length != "\x00\x00\x00\x00" and bool(ident.rstrip('\x00')) and conv_mem_bin_int(length) == len(item[0][1]):
           matches.append(ident)
-      if len(matches) > 50:
-        return matches
+          if len(matches) > 50:
+            return collections.Counter(matches).most_common(1)[0][0]
 
 def dump_vars_from_mem(match, mem_dump):
   alldata = []
@@ -186,24 +186,24 @@ def process_it(big_dump,selection):
     return False
   yellow("[i] Please wait, processing memory dump...")
   mem_dump = big_dump['mem_dump']['data']
-  script_blocks = list(set([x.replace('\x00','').strip() for x in re.findall(r'(?:(?:\x00)?[\x01-\x7F]){500,}', mem_dump, re.DOTALL) if set(["$"," ","e","t"]).issubset([y[0] for y in collections.Counter(x).most_common(10)]) ]))
+  script_blocks = list(set([x.replace('\x00','').strip() for x in re.findall(r'(?:(?:\x00)?[\x01-\x7F]){500,}', mem_dump, re.DOTALL) if set(["$"," ","e","t"]).issubset([y[0] for y in collections.Counter(x).most_common(15)]) or set(['iex','streamreader','deflatestream','frombase64string']).issubset(re.findall(r'([a-zA-Z0-9][\w\-]+?[a-zA-Z0-9])[^a-zA-Z0-9]',x.lower())) ]))
   if not bool(len(script_blocks)):
     red('[-] No Powershell Scripts Found in Memory')
     time.sleep(2)
     return False
   green("[+] Found "+str(len(script_blocks))+" script blocks!")
-  var_names = list(set([x for x in re.findall(r'\$\w+?\s+?\=\s+?.+?(?:\r\n|\r|\n|\;)', ' ; '.join(script_blocks), re.DOTALL)]))
+  var_names = list(set([x.strip() for x in re.findall(r'\$\w+?\s+?\=\s+?.+?(?:\r\n|\r|\n|\;)', ' ; '.join(script_blocks), re.DOTALL)]))
   if not bool(len(script_blocks)):
     red('[-] No Powershell Variables Found!')
     time.sleep(2)
     return False
   green("[+] Found some Powershell variable names to work with...")
-  matches = find_var_matches(mem_dump, var_names)
   try:
-    match = ''
-    match = collections.Counter(matches).most_common(1)[0][0]
+    match = find_var_matches(mem_dump, var_names)
   except:
-    pass
+    red('[-] Failed to find a match')
+    time.sleep(2)
+    return
   if not bool(len(match)):
     red('[-] No Powershell Variables Found!')
     return False
@@ -284,7 +284,7 @@ def sift_the_dump(big_dump,selection):
       opt = re.findall(r'^dump\s+?(all|\d+)$', selection, re.IGNORECASE)
       if not bool(opt):
         opt = 'all'
-      dump_dir = re.sub(r'[^\w]','',list(filter(None, ntpath.basename(big_dump['mem_dump']['path']).split('.')))[0])+'_'+scripts_or_vars
+      dump_dir = re.sub(r'[^\w]','',list(filter(None, ntpath.basename(big_dump['mem_dump']['path']).split('.')))[0])+'_var_script_dump'
       if not os.path.exists(dump_dir):
         green('[+] Made Directory '+dump_dir)
         os.mkdir(dump_dir)
@@ -380,7 +380,10 @@ def main():
         red('Processed  : False')
     selection = raw_input('\n'.join(menu)).strip().upper()
     if selection in power_dump_functions.keys():
-      EXIT = power_dump_functions[selection](big_dump,selection)
+      try:
+        EXIT = power_dump_functions[selection](big_dump,selection)
+      except:
+        PrintException()
     else:
       no_option(selection)
 
