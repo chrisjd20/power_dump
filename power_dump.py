@@ -12,6 +12,8 @@ import sys
 import linecache
 import subprocess as sp
 import ast 
+import ntpath
+import pickle
 
 powerdump = [
   '''==============================
@@ -47,9 +49,6 @@ Dumps PowerShell From Memory
 
 conv_mem_bin_int = lambda bin_val: 0 if bool(bin_val) and bin_val[0] == "\x00" and bin_val == len(bin_val) * bin_val[0] else int(bin_val.rstrip('\x00')[::-1].encode("hex-codec"), 16)
 
-def clear():
-  global clear_var
-  sp.call(clear_var,shell=True)
 
 def scroll_down():
   print('\n'*5)
@@ -84,7 +83,6 @@ if os.name != 'nt':
   blue = colorize(color.blue, color.bgblack)
   alert = colorize(color.white, color.bgred)
   brown = colorize(color.brown, color.bgblack)
-  clear_var = 'clear'
 else:
   red = newprint
   green = newprint
@@ -94,7 +92,6 @@ else:
   blue = newprint
   brown = newprint
   powerdump[1] = powerdump[2]
-  clear_var = 'cls'
 
 def PrintException():
     exc_type, exc_obj, tb = sys.exc_info()
@@ -105,16 +102,15 @@ def PrintException():
     line = linecache.getline(filename, lineno, f.f_globals)
     alert('EXCEPTION IN ({}, LINE {} "{}"): {}'.format(filename, lineno, line.strip(), exc_obj))
 
-def take_dump(big_dump):
+def take_dump(big_dump,selection):
   menu = [
     '\n============ Load Dump Menu ================',
     'COMMAND |     ARGUMENT       | Explanation  ',
     '========|====================|==============',
     'ld      | /path/to/file.name | load mem dump',
     'ls      | ../directory/path  | list files   ',
-    'B       |                    | back to menu  ',
+    'B       |                    | back to menu ',
     '============= Loaded File: =================',
-    
   ]
   cmd = ''
   while True:
@@ -134,11 +130,11 @@ def take_dump(big_dump):
       continue
     if cmd.upper() == "LD" and os.path.isfile(arg):
       try:
-        mem_dump = open('wannacookie_mem_1.dmp','rb').read()
+        mem_dump = open(arg,'rb').read()
         big_dump['mem_dump']['data'] = mem_dump
         big_dump['mem_dump']['length'] = len(mem_dump)
         big_dump['mem_dump']['path'] = arg
-        big_dump['mem_data'] = {'variables':[],'script_blocks':[],'stored_variable_values':[],'processed':False}
+        big_dump['mem_data'] = {'variables':[],'script_blocks':[],'variable_values':[],'processed':False}
       except:
         PrintException()
     elif cmd.upper() == "LS" and  os.path.isdir(arg):
@@ -168,7 +164,7 @@ def find_var_matches(mem_dump, var_names):
       for ident,length in re.findall(r'(.{6})..(.{4})'+(item[0][1].encode('UTF-16LE')), mem_dump):
         if length != "\x00\x00\x00\x00" and bool(ident.rstrip('\x00')) and conv_mem_bin_int(length) == len(item[0][1]):
           matches.append(ident)
-      if len(matches) > 100:
+      if len(matches) > 50:
         return matches
 
 def dump_vars_from_mem(match, mem_dump):
@@ -182,25 +178,27 @@ def dump_vars_from_mem(match, mem_dump):
   return alldata
 
 
-def digest_it(big_dump):
+def process_it(big_dump,selection):
   if big_dump['mem_data']['processed']:
     red('[-] Your memory dump is already processed!')
-    time.sleep(1)
+    time.sleep(2)
     return False
   if not bool(big_dump['mem_dump']['length']):
     red('[-] No Memory Dump Loaded!')
-    time.sleep(1)
+    time.sleep(2)
     return False
   yellow("[i] Please wait, processing memory dump...")
   mem_dump = big_dump['mem_dump']['data']
-  script_blocks = [x for x in re.findall(r'(?:(?:\x00)?[\x01-\x7F]){500,}', mem_dump, re.DOTALL) if set(["$"," ","e","t"]).issubset([y[0] for y in collections.Counter(x).most_common(10)]) ]
+  script_blocks = list(set([x.replace('\x00','').strip() for x in re.findall(r'(?:(?:\x00)?[\x01-\x7F]){500,}', mem_dump, re.DOTALL) if set(["$"," ","e","t"]).issubset([y[0] for y in collections.Counter(x).most_common(10)]) ]))
   if not bool(len(script_blocks)):
     red('[-] No Powershell Scripts Found in Memory')
+    time.sleep(2)
     return False
   green("[+] Found "+str(len(script_blocks))+" script blocks!")
-  var_names = list(set([x.replace('\x00','') for x in re.findall(r'\$(?:(?:\x00)?\w)+?(?:(?:\x00)?\s)+?(?:\x00)?\=(?:(?:\x00)?\s)+?(?:\x00)?.+?(?:\r\n|\r|\n|\;)', ';'.join(script_blocks), re.DOTALL)]))
+  var_names = list(set([x for x in re.findall(r'\$\w+?\s+?\=\s+?.+?(?:\r\n|\r|\n|\;)', ' ; '.join(script_blocks), re.DOTALL)]))
   if not bool(len(script_blocks)):
     red('[-] No Powershell Variables Found!')
+    time.sleep(2)
     return False
   green("[+] Found some Powershell variable names to work with...")
   matches = find_var_matches(mem_dump, var_names)
@@ -213,98 +211,134 @@ def digest_it(big_dump):
     red('[-] No Powershell Variables Found!')
     return False
   stored_ascii_powershell_variables = dump_vars_from_mem(match, mem_dump)
-  green("[+] Found "+str(len(stored_ascii_powershell_variables))+" ascii variables stored in memory")
+  green("[+] Found "+str(len(stored_ascii_powershell_variables))+" possible variables stored in memory")
   big_dump['mem_data']['variables'] = var_names
   big_dump['mem_data']['script_blocks'] = script_blocks
-  big_dump['mem_data']['stored_variable_values'] = stored_ascii_powershell_variables
+  big_dump['mem_data']['variable_values'] = stored_ascii_powershell_variables
   big_dump['mem_data']['processed'] = True
+  big_dump['mem_dump']['data'] = ''
+  if raw_input('Would you like to save this processed data for quick processing later "Y"es or "N"o?\n: ').strip().lower() in ['y','ye','yes']:
+    with open('.last_memory_processed.pickle', 'wb') as handle:
+      pickle.dump(big_dump, handle, protocol=pickle.HIGHEST_PROTOCOL)
   time.sleep(0.5)
   green('\nSuccessfully Processed Memory Dump!\n')
   raw_input('Press Enter to Continue...')
   return False
 
-def sift_the_dump_for_loads(big_dump):
+def sift_the_dump(big_dump,selection):
   if not big_dump['mem_data']['processed']:
     red('[-] Memory dump not loaded or not processed!')
     time.sleep(1)
     return False
+  if selection == '3':
+    scripts_or_vars='script_blocks'
+    menu_text = 'Script Blocks'
+  else:
+    scripts_or_vars='variable_values'
+    menu_text = 'Variable Values'
   menu = [
-    '============== Search/Dump PS Script Blocks ===================================',
+    '============== Search/Dump PS '+menu_text+' ===================================',
     'COMMAND        |     ARGUMENT                | Explanation                     ',
     '===============|=============================|=================================',
-    'print          | print [all|num]             | print specific or all scripts   ',
-    'dump           | dump [all|num] [dest_file]  | dump specific or all scripts    ',
-    'contains       | contains [ascii_string]     | script block must contain string',
-    'matches        | matches ["python_regex"]    | match python regex inside quotes',
-    'len            | len [><=] [byte_size]       | script length >,<,=,>=,<= size  ',
+    'print          | print [all|num]             | print specific or all '+menu_text.split(' ')[0]+'s',
+    'dump           | dump [all|num]              | dump specific or all '+menu_text.split(' ')[0]+'s',
+    'contains       | contains [ascii_string]     | '+menu_text+' must contain string',
+    'matches        | matches "[python_regex]"    | match python regex inside quotes',
+    'len            | len [>|<|>=|<=|==] [bt_size]| '+menu_text.split(' ')[0]+'s length >,<,=,>=,<= size  ',
     'clear          | clear [all|num]             | clear all or specific filter num',
     '===============================================================================\n: ',
   ]
+  for_loop = ["["+scripts_or_vars+" for "+scripts_or_vars+" in big_dump['mem_data']['"+scripts_or_vars+"'] ", " ]"]
+  search_filters = []
   while True:
-    for_loop = ["[x for x in big_dump['mem_data']['script_blocks'] ", " ]"]
-    search_filters = []
     if len(search_filters):
-      filtered_script_blocks = eval(for_loop[0] + ' if ' + ' and '.join(search_filters) + for_loop[-1])
+      filtered_script_or_vars = eval(for_loop[0] + ' if ' + ' and '.join(search_filters) + for_loop[-1])
     else:
-      filtered_script_blocks = big_dump['mem_data']['script_blocks']
+      filtered_script_or_vars = big_dump['mem_data'][scripts_or_vars]
     if len(search_filters):
       print('\n================ Filters ================')
-      for filt in search_filters:
-        if 'bool(' in filt:
-          tmp = 'MATCHES '
-        elif ' in ' in filt:
-          tmp = "CONTAINS "
+      for filt in range(len(search_filters)):
+        if 'bool(' in search_filters[filt]:
+          tmp = str(filt+1)+'| MATCHES '
+        elif ' in ' in search_filters[filt]:
+          tmp = str(filt+1)+"| CONTAINS "
         else:
-          tmp = "LENGTH "
-        green(tmp + filt)
-    blue('\n'+str(len(filtered_script_blocks)) + ' powershell script blocks found!')
+          tmp = str(filt+1)+"| LENGTH "
+        green(tmp + search_filters[filt])
+    yellow('\n[i] '+str(len(filtered_script_or_vars)) + ' powershell '+menu_text+' found!')
     selection = raw_input('\n'.join(menu)).strip()
     if selection.upper().startswith('CONTAINS ') and len([x for x in selection.split(' ') if x != '']) > 1:
       sel = selection[9:].strip()
-      search_filters.append(sel+' in x ')
-    elif selection.upper.startswith('PRINT ') and bool(re.search(r'^print\s+?(:all|\d+)\s+?$', selection, re.IGNORECASE)):
-      if 'all' in selection:
-        count = 1
-        for script in filtered_script_blocks:
-          blue(script)
-          if bool(raw_input('Script block #'+str(count)+' above.\nType any key to go back and just Enter to Continue...')):
+      search_filters.append(repr(sel)+' in '+scripts_or_vars+' ')
+    elif selection.upper() == "PRINT" or bool(selection.upper().startswith('PRINT ') and bool(re.search(r'^print\s+?(?:all|\d+)$', selection, re.IGNORECASE))):
+      if 'all' in selection.lower() or selection.upper() == "PRINT":
+        for i in range( len( filtered_script_or_vars )):
+          blue(filtered_script_or_vars[i])
+          if bool(raw_input(menu_text+' #'+str(i+1)+' above ^\nType any key to go back and just Enter to Continue...').strip()):
             break
-          count += 1
       else:
         sel = int(selection[6:].strip())
-        if sel >= 1 and sel <= len(filtered_script_blocks):
-          blue(filtered_script_blocks[sel-1])
+        if sel >= 1 and sel <= len(filtered_script_or_vars):
+          blue(filtered_script_or_vars[sel-1])
           raw_input('Press Enter to Continue...')
-    elif selection.upper.startswith('DUMP ') and bool(re.search(r'^dump\s+?(?:all|\d+)\s+?([\w\.]+?)$', selection, re.IGNORECASE)):
-      opt,
-      if 'all' in selection:
-        for script in filtered_script_blocks:
-          #something here
+        else:
+          red('[-] '+str(sel)+' invalid '+menu_text+' selection!')
+    elif selection.upper() == "DUMP" or bool(selection.upper().startswith('DUMP ') and bool(re.search(r'^dump\s+?(?:all|\d+)$', selection, re.IGNORECASE))):
+      opt = re.findall(r'^dump\s+?(all|\d+)$', selection, re.IGNORECASE)
+      if not bool(opt):
+        opt = 'all'
+      dump_dir = re.sub(r'[^\w]','',list(filter(None, ntpath.basename(big_dump['mem_dump']['path']).split('.')))[0])+'_'+scripts_or_vars
+      if not os.path.exists(dump_dir):
+        green('[+] Made Directory '+dump_dir)
+        os.mkdir(dump_dir)
+      if scripts_or_vars == 'variable_values':
+        tmp = open(dump_dir+'/'+scripts_or_vars+".txt",'wb')
+        tmp.write('\n'.join([repr(x) if '\r' in x or '\n' in x else x for x in filtered_script_or_vars]))
+        tmp.close()
+        green("[+] saved variables to "+dump_dir+'/'+scripts_or_vars+".txt")
+        time.sleep(2)
+        continue
+      if 'all' in opt:
+        for i in range( len( filtered_script_or_vars )):
+          tmp = open(dump_dir+'/'+str(i)+".ps1",'wb')
+          tmp.write(filtered_script_or_vars[i])
+          tmp.close()
+          green('[+] '+menu_text+' '+str(i)+' saved in '+dump_dir)
       else:
-        dig,
-        if sel >= 1 and sel <= len(filtered_script_blocks):
-          #something here
+        sel = int(selection[5:].strip())
+        if sel >= 1 and sel <= len(filtered_script_or_vars):
+          tmp = open(dump_dir+'/'+str(sel)+".ps1",'wb')
+          tmp.write(filtered_script_or_vars[sel-1])
+          tmp.close()
+          green('[+] '+menu_text+' '+str(sel)+' saved in '+dump_dir)
     elif selection.upper().startswith('MATCHES ') and bool(re.search(r'^matches\s+?\".+\"$', selection, re.IGNORECASE)):
       regex = re.findall(r'^matches\s+?\"(.+)\"$',selection)[0]
-      search_filters.append(' bool(re.search(r"'+regex+'",x)) ')
-    elif selection.upper().startswith('LEN ') and len(selection.split(' ')) > 3 and bool(re.search(r'^len\s+?(?:\>|\<|\>\=|\<\=)\s+?\d+$',selection, re.IGNORECASE)):
-      op, dig = re.findall(r'^len\s+?((?:\>|\<|\>\=|\<\=))\s+?(\d+)$',selection)[0]
+      try:
+        re.compile(regex)
+      except:
+        red('[-] Invalid Regex. Ex:\nmatches "^hello world$"')
+        continue
+      search_filters.append(' bool(re.search(r"'+regex+'",'+scripts_or_vars+')) ')
+    elif selection.upper().startswith('LEN ') and len([x for x in selection.split(' ') if x != '']) > 2 and bool(re.search(r'^len\s+?(?:\>|\<|\>\=|\<\=|\=\=)\s+?\d+$',selection, re.IGNORECASE)):
+      op, dig = re.findall(r'^len\s+?((?:\>|\<|\>\=|\<\=|\=\=))\s+?(\d+)$',selection)[0]
       if op == ">":
-        search_filters.append(' x > '+dig)
+        search_filters.append(' len('+scripts_or_vars+') > '+dig)
       elif op == "<":
-        search_filters.append(' x < '+dig)
+        search_filters.append(' len('+scripts_or_vars+') < '+dig)
       elif op == "<=":
-        search_filters.append(' x <= '+dig)
+        search_filters.append(' len('+scripts_or_vars+') <= '+dig)
       elif op == ">=":
-        search_filters.append(' x >= '+dig)
-    elif selection.upper().startswith('CLEAR ') and bool(re.search(r'^clear\s+?(?:\d+|all)$',selection, re.IGNORECASE)):
+        search_filters.append(' len('+scripts_or_vars+') >= '+dig)
+      elif op == "==":
+        search_filters.append(' len('+scripts_or_vars+') == '+dig)
+    elif  selection.upper() == "CLEAR" or bool( selection.upper().startswith('CLEAR ') and bool(re.search(r'^clear\s+?(?:\d+|all)$',selection, re.IGNORECASE)) ):
       if bool(re.search(r'^clear\s+?\d+$',selection, re.IGNORECASE)):
         num = int([x for x in selection.split(' ') if x != ""][1])
         if num <= len(search_filters) and num >=1:
           del search_filters[num-1]
-      elif 'all' in selection.lower():
+      elif selection.upper() == "CLEAR" or 'all' in selection.lower():
         search_filters = []
-    elif selection.upper().startswith('B'):
+    elif selection.upper() in ['B','E','Q','BACK','EXIT','QUIT']:
       return False
     else:
       no_option(selection)
@@ -313,10 +347,10 @@ def sift_the_dump_for_loads(big_dump):
 def main():
   power_dump_functions = {
     '1':take_dump,
-    '2':digest_it,
-    '3':sift_the_dump_for_loads,
-    '4':sift_the_dump_for_loads,
-    'E':lambda x:True
+    '2':process_it,
+    '3':sift_the_dump,
+    '4':sift_the_dump,
+    'E':lambda x,y:True
   }
   EXIT = False
   menu = [
@@ -324,13 +358,20 @@ def main():
     '1. Load PowerShell Memory Dump File',
     '2. Process PowerShell Memory Dump',
     '3. Search/Dump Powershell Scripts',
-    '4. Search/Dump Stored String Variables',
+    '4. Search/Dump Stored PS Variables',
     'e. Exit\n: '
   ]
-  big_dump = {
-    'mem_dump':{'data':'','length':'','path':''},
-    'mem_data':{'variables':[],'script_blocks':[],'stored_variable_values':[],'processed':False}
-  }
+  big_dump = False
+  if os.path.isfile('.last_memory_processed.pickle'):
+    yellow("[i] Processed Pickle Memory Dump Found. Load this prior processed memory?\n'Y'es or 'N'o? (Yes only if from trusted source)")
+    if raw_input(': ').strip().lower() in ['y','ye','yes']:
+      with open('.last_memory_processed.pickle', 'rb') as handle:
+        big_dump = pickle.load(handle)
+  if not bool(big_dump):
+    big_dump = {
+      'mem_dump':{'data':'','length':'','path':''},
+      'mem_data':{'variables':[],'script_blocks':[],'variable_values':[],'processed':False}
+    }
   while not EXIT:
     if bool(big_dump['mem_dump']['length']):
       print('\n\n\n============ Main Menu ================')
@@ -342,7 +383,7 @@ def main():
         red('Processed  : False')
     selection = raw_input('\n'.join(menu)).strip().upper()
     if selection in power_dump_functions.keys():
-      EXIT = power_dump_functions[selection](big_dump)
+      EXIT = power_dump_functions[selection](big_dump,selection)
     else:
       no_option(selection)
 
