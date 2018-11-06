@@ -80,8 +80,10 @@ if os.name != 'nt':
   blue = colorize(color.blue, color.bgblack)
   alert = colorize(color.white, color.bgred)
   brown = colorize(color.brown, color.bgblack)
+  altred = colorize(color.red)
 else:
   red = newprint
+  altred = newprint
   green = newprint
   white = newprint
   yellow = newprint
@@ -360,7 +362,7 @@ def main():
   ]
   big_dump = False
   if os.path.isfile('.last_memory_processed.pickle'):
-    yellow("[i] Processed Pickle Memory Dump Found. Load this prior processed memory?\n'Y'es or 'N'o? (Yes only if from trusted source)")
+    yellow("[i] Processed Pickle Memory Dump Found.\nLoad this prior processed memory?\n'Y'es or 'N'o? (Yes only if from trusted source)")
     if raw_input(': ').strip().lower() in ['y','ye','yes']:
       with open('.last_memory_processed.pickle', 'rb') as handle:
         big_dump = pickle.load(handle)
@@ -389,7 +391,7 @@ def main():
 
 
 if __name__ == "__main__":
-  blue(powerdump[0])
+  print(powerdump[0])
   brown(powerdump[1])
-  blue(powerdump[3])
+  print(powerdump[3])
   main()
