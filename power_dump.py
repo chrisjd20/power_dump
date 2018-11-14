@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #used to strip out powershell scripts from memory and get stored variable values
+#Tested on 64 bit Windows 10 only. Won't work on 32 bit dumps
 import re
-import itertools
-import operator
 import collections
 import os
 import time
