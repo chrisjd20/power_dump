@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-#used to strip out powershell scripts from memory and get stored variable values
-#Tested on 64 bit Windows 10 only. Won't work on 32 bit dumps
+# Dumps out powershell script blocks and stored string variables in 64 bit powershell process dumps
+# Tested on 64 bit Windows 10 powershell process dumps only. Shouldn't work on 32 bit dumps.
+# Process dumps made using procdump64.exe -ma <pid>
+# https://docs.microsoft.com/en-us/sysinternals/downloads/procdump
+# Author: Chris Davis
+# License: MIT License
 import re
 import collections
 import os
