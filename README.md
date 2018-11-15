@@ -2,6 +2,8 @@
 
 Power Dump takes a 64 bit Windows 10 powershell process dump made using procdump and retrieves powershell blocks and variables from memory.
 
+![alt text](screenshot.PNG)
+
 # Pre Reqs:
 
 
