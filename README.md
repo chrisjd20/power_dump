@@ -23,3 +23,5 @@ https://docs.microsoft.com/en-us/sysinternals/downloads/procdump
 5. `ld powershell.exe_mem_dump1928461283`
 6. Select option 2  (wait for it to process)
 7. Select option 3 or 4 to perform filter searching
+
+# License: MIT License
