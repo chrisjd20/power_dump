@@ -25,3 +25,5 @@ https://docs.microsoft.com/en-us/sysinternals/downloads/procdump
 7. Select option 3 or 4 to perform filter searching
 
 # License: MIT License
+
+# Test on: Windows 10 64 bit Intel
