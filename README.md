@@ -27,3 +27,7 @@ https://docs.microsoft.com/en-us/sysinternals/downloads/procdump
 # License: MIT License
 
 # Test on: Windows 10 64 bit Intel
+
+# Todo:
+
+Needs some cleaning up. Expand this out for all Windows OS dumps and architectures. Also add different payload searches other than powershell.
